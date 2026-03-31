@@ -1,0 +1,27 @@
+# 编译生成的二进制文件
+*.o
+*.out
+*.elf
+*.bin
+*.img
+
+# 调试与依赖文件
+*.d
+*.obj
+
+# 常见的构建目录
+build/
+bin/
+target/
+
+# VS Code 个人配置（建议忽略，除非你想同步所有插件设置）
+.vscode/ipch/
+.vscode/msvc.db
+.vscode/browse.vc.db
+
+# 操作系统临时文件
+.DS_Store
+Thumbs.db
+
+# 某些网络代理或工具的本地配置
+.clash/
