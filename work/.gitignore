@@ -25,3 +25,6 @@ Thumbs.db
 
 # 某些网络代理或工具的本地配置
 .clash/
+
+#vscode配置文件夹
+.vscode
