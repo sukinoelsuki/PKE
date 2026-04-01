@@ -28,3 +28,6 @@ Thumbs.db
 
 #vscode配置文件夹
 .vscode
+
+#参照源文件
+riscv-pke/
