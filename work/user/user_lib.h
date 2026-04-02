@@ -8,3 +8,7 @@ void* naive_malloc();
 void naive_free(void* va);
 int fork();
 void yield();
+
+int sem_new(int value);  //to do
+void sem_P(int sem_id);  //
+void sem_V(int sem_id);  //

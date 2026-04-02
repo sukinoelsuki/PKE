@@ -17,4 +17,9 @@
 
 long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7);
 
+// 在已有的系统调用定义（如 SYS_user_exit）下面添加 
+#define SYS_user_sem_new    (SYS_user_base + 10) // 数字只要不冲突就行
+#define SYS_user_sem_P      (SYS_user_base + 11)
+#define SYS_user_sem_V      (SYS_user_base + 12)
+
 #endif

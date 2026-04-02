@@ -76,3 +76,17 @@ int fork() {
 void yield() {
   do_user_call(SYS_user_yield, 0, 0, 0, 0, 0, 0, 0);
 }
+
+// to be filled in
+
+int sem_new(int value) {
+    return do_user_call(SYS_user_sem_new, value, 0, 0, 0, 0, 0, 0);
+}
+
+void sem_P(int sem_id) {
+    do_user_call(SYS_user_sem_P, sem_id, 0, 0, 0, 0, 0, 0);
+}
+
+void sem_V(int sem_id) {
+    do_user_call(SYS_user_sem_V, sem_id, 0, 0, 0, 0, 0, 0);
+}
