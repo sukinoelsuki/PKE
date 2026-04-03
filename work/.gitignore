@@ -4,6 +4,7 @@
 *.elf
 *.bin
 *.img
+*.a
 
 # 调试与依赖文件
 *.d
@@ -31,3 +32,9 @@ Thumbs.db
 
 #参照源文件
 riscv-pke/
+
+#编译产物
+obj/
+
+#具体二进制产物
+riscv_pke
