@@ -169,7 +169,7 @@ int free_process( process* proc ) {
 }
 
 //
-// implements fork syscal in kernel. added @lab3_1
+// implements fork syscall in kernel. added @lab3_1
 // basic idea here is to first allocate an empty process (child), then duplicate the
 // context and data segments of parent process to the child, and lastly, map other
 // segments (code, system) of the parent to child. the stack segment remains unchanged
@@ -205,8 +205,8 @@ int do_fork( process* parent)
         }
 
         // copy and map the heap blocks
-        for (uint64 heap_block = current->user_heap.heap_bottom;
-             heap_block < current->user_heap.heap_top; heap_block += PGSIZE) {
+        for (uint64 heap_block = parent->user_heap.heap_bottom;
+             heap_block < parent->user_heap.heap_top; heap_block += PGSIZE) { //修改current为parent，保证语义清晰。
           if (free_block_filter[(heap_block - heap_bottom) / PGSIZE])  // skip free blocks
             continue;
 
@@ -222,16 +222,13 @@ int do_fork( process* parent)
         memcpy((void*)&child->user_heap, (void*)&parent->user_heap, sizeof(parent->user_heap));
         break;
       case CODE_SEGMENT:
-        // TODO (lab3_1): implment the mapping of child code segment to parent's
-        // code segment.
-        // hint: the virtual address mapping of code segment is tracked in mapped_info
-        // page of parent's process structure. use the information in mapped_info to
-        // retrieve the virtual to physical mapping of code segment.
-        // after having the mapping information, just map the corresponding virtual
-        // address region of child to the physical pages that actually store the code
-        // segment of parent process.
-        // DO NOT COPY THE PHYSICAL PAGES, JUST MAP THEM.
-        panic( "You need to implement the code segment mapping of child in lab3_1.\n" );
+        sprint("Forking Code: va 0x%lx, npages %d\n", parent->mapped_info[i].va, parent->mapped_info[i].npages);
+        for (uint32 current_page = 0; current_page < parent->mapped_info[i].npages; ++current_page) {
+          uint64 va = parent->mapped_info[i].va + current_page * PGSIZE;
+          user_vm_map((pagetable_t)child->pagetable, va, PGSIZE,
+                      lookup_pa((pagetable_t)parent->pagetable, va), prot_to_type(PROT_READ | PROT_EXEC, 1));
+        }
+
 
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
@@ -243,6 +240,7 @@ int do_fork( process* parent)
     }
   }
 
+  child->trapframe->regs.tp = (uint64)child;
   child->status = READY;
   child->trapframe->regs.a0 = 0;
   child->parent = parent;
