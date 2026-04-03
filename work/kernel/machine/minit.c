@@ -70,6 +70,7 @@ static void delegate_traps() {
   // priviledged registers of RV64G machine) respectively.
   //
   // write_csr and read_csr are macros defined in kernel/riscv.h
+  
   /*write_csr(mideleg, interrupts);
   write_csr(medeleg, exceptions);
   assert(read_csr(mideleg) == interrupts);
