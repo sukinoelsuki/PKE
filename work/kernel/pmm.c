@@ -15,6 +15,8 @@ extern uint64 g_mem_size;
 static uint64 free_mem_start_addr;  //beginning address of free memory
 static uint64 free_mem_end_addr;    //end address of free memory (not included)
 
+static short page_ref[MAX_PAGE];
+
 typedef struct node {
   struct node *next;
 } list_node;
@@ -28,8 +30,12 @@ static list_node g_free_mem_list;
 //
 static void create_freepage_list(uint64 start, uint64 end) {
   g_free_mem_list.next = 0;
-  for (uint64 p = ROUNDUP(start, PGSIZE); p + PGSIZE < end; p += PGSIZE)
+  for (uint64 p = ROUNDUP(start, PGSIZE); p + PGSIZE < end; p += PGSIZE) {
+    //提前置1，便于在free_page时将节点仍进链表，完成逻辑闭环。
+    page_ref[PA_TO_IDX(p)] = 1;
+    
     free_page( (void *)p );
+  }
 }
 
 //
@@ -39,10 +45,20 @@ void free_page(void *pa) {
   if (((uint64)pa % PGSIZE) != 0 || (uint64)pa < free_mem_start_addr || (uint64)pa >= free_mem_end_addr)
     panic("free_page 0x%lx \n", pa);
 
-  // insert a physical page to g_free_mem_list
-  list_node *n = (list_node *)pa;
-  n->next = g_free_mem_list.next;
-  g_free_mem_list.next = n;
+  //维护index数组，实时管理page生命周期。
+  
+  int page_index = PA_TO_IDX(pa);
+
+  if (page_ref[page_index] <= 0) panic("free_page: double free or ref count error!");
+
+  page_ref[page_index]--;
+
+  if (page_ref[page_index] == 0) {
+    list_node *n = (list_node *)pa;
+    n->next = g_free_mem_list.next;
+    g_free_mem_list.next = n;
+  }
+
 }
 
 //
@@ -52,8 +68,20 @@ void free_page(void *pa) {
 void *alloc_page(void) {
   list_node *n = g_free_mem_list.next;
   if (n) g_free_mem_list.next = n->next;
-
+  page_ref[PA_TO_IDX(n)] = 1;
   return (void *)n;
+}
+
+//COW fork add
+
+void get_page(void* pa) {
+  page_ref[PA_TO_IDX(pa)]++;
+}
+
+//check shared or not
+
+int is_shared_page(void* pa) {
+  return page_ref[PA_TO_IDX(pa)] > 1;
 }
 
 //
@@ -61,6 +89,7 @@ void *alloc_page(void) {
 // physical memory space.
 //
 void pmm_init() {
+  
   // start of kernel program segment
   uint64 g_kernel_start = KERN_BASE;
   uint64 g_kernel_end = (uint64)&_end;
@@ -83,6 +112,7 @@ void pmm_init() {
     free_mem_end_addr - 1);
 
   sprint("kernel memory manager is initializing ...\n");
+
   // create the list of free pages
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
 }

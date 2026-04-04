@@ -187,6 +187,9 @@ int do_fork( process* parent)
       case CONTEXT_SEGMENT:
         *child->trapframe = *parent->trapframe;
         break;
+
+//实现COW之前，采用的逻辑。
+/*        
       case STACK_SEGMENT:
         memcpy( (void*)lookup_pa(child->pagetable, child->mapped_info[STACK_SEGMENT].va),
           (void*)lookup_pa(parent->pagetable, parent->mapped_info[i].va), PGSIZE );
@@ -221,6 +224,38 @@ int do_fork( process* parent)
         // copy the heap manager from parent to child
         memcpy((void*)&child->user_heap, (void*)&parent->user_heap, sizeof(parent->user_heap));
         break;
+*/        
+      case STACK_SEGMENT:
+      case HEAP_SEGMENT:
+        pte_t *pte;
+        uint64 va;
+        for (uint32 page_number = 0; page_number < parent->mapped_info[i].npages; page_number++) {
+          va = parent->mapped_info[i].va + page_number * PGSIZE;
+          pte = page_walk((pagetable_t)parent->pagetable, va, 0);
+
+          if (*pte & PTE_V) {
+            //如果可读，修改权限。
+            if (PTE_W & *pte) {
+              *pte &= ~PTE_W;
+              *pte |= PTE_COW;
+            }
+
+            get_page(PTE2PA(*pte));
+
+            uint64 *c_pte = page_walk((pagetable_t)child->pagetable, va, 1);
+            *c_pte = *pte;
+
+          }
+
+        }
+
+        if (parent->mapped_info[i].seg_type == HEAP_SEGMENT) {
+          memcpy(&child->user_heap, &parent->user_heap, sizeof(parent->user_heap));
+        }
+        break;
+
+
+
       case CODE_SEGMENT:
         sprint("Forking Code: va 0x%lx, npages %d\n", parent->mapped_info[i].va, parent->mapped_info[i].npages);
         for (uint32 current_page = 0; current_page < parent->mapped_info[i].npages; ++current_page) {
@@ -246,5 +281,7 @@ int do_fork( process* parent)
   child->parent = parent;
   insert_to_ready_queue( child );
 
+  // 在 do_fork 返回之前，更新快表。
+  flush_tlb();
   return child->pid;
 }
