@@ -72,6 +72,10 @@ void *alloc_page(void) {
   return (void *)n;
 }
 
+short get_page_ref(uint64 pa) {
+  return page_ref[PA_TO_IDX(pa)];
+}
+
 //COW fork add
 
 void get_page(void* pa) {

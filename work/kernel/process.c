@@ -226,7 +226,7 @@ int do_fork( process* parent)
         break;
 */        
       case STACK_SEGMENT:
-      case HEAP_SEGMENT:
+      case HEAP_SEGMENT: {
         pte_t *pte;
         uint64 va;
         for (uint32 page_number = 0; page_number < parent->mapped_info[i].npages; page_number++) {
@@ -234,37 +234,35 @@ int do_fork( process* parent)
           pte = page_walk((pagetable_t)parent->pagetable, va, 0);
 
           if (*pte & PTE_V) {
-            //如果可读，修改权限。
+            //如果可写，修改权限。
             if (PTE_W & *pte) {
               *pte &= ~PTE_W;
               *pte |= PTE_COW;
             }
 
-            get_page(PTE2PA(*pte));
+            get_page((void *)(PTE2PA(*pte)));
 
             uint64 *c_pte = page_walk((pagetable_t)child->pagetable, va, 1);
+            //注意判断为空
+            if (!c_pte) panic("do_fork: page_walk failed to allocate leaf page table.\n");
             *c_pte = *pte;
 
           }
-
         }
-
         if (parent->mapped_info[i].seg_type == HEAP_SEGMENT) {
           memcpy(&child->user_heap, &parent->user_heap, sizeof(parent->user_heap));
         }
         break;
+      }
 
-
-
-      case CODE_SEGMENT:
+      //代码段修改，只读，挂载即可。
+      case CODE_SEGMENT: {
         sprint("Forking Code: va 0x%lx, npages %d\n", parent->mapped_info[i].va, parent->mapped_info[i].npages);
         for (uint32 current_page = 0; current_page < parent->mapped_info[i].npages; ++current_page) {
           uint64 va = parent->mapped_info[i].va + current_page * PGSIZE;
           user_vm_map((pagetable_t)child->pagetable, va, PGSIZE,
                       lookup_pa((pagetable_t)parent->pagetable, va), prot_to_type(PROT_READ | PROT_EXEC, 1));
         }
-
-
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
         child->mapped_info[child->total_mapped_region].npages =
@@ -272,6 +270,8 @@ int do_fork( process* parent)
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
         break;
+      }
+        
     }
   }
 

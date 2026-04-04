@@ -87,6 +87,10 @@ typedef struct process_t {
   // next queue element
   struct process_t *queue_next;
 
+//记录表头，管理子进程信息，初始化时可以就申请一个页表，应该足够存下所有子进程指针。
+//struct process_t *child;
+//
+
   // accounting. added @lab3_3
   int tick_count;
 }process;

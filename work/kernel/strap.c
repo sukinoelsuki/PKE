@@ -10,6 +10,7 @@
 #include "vmm.h"
 #include "sched.h"
 #include "util/functions.h"
+#include "string.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -53,14 +54,45 @@ void handle_mtimer_trap() {
 void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
   sprint("handle_page_fault: %lx\n", stval);
   switch (mcause) {
-    case CAUSE_STORE_PAGE_FAULT:
+    case CAUSE_STORE_PAGE_FAULT: {
       // TODO (lab2_3): implement the operations that solve the page fault to
       // dynamically increase application stack.
       // hint: first allocate a new physical page, and then, maps the new page to the
       // virtual address that causes the page fault.
-      panic( "You need to implement the operations that actually handle the page fault in lab2_3.\n" );
+      pte_t *pte = page_walk(current->pagetable, stval, 0);
+      if (pte && (*pte & PTE_V) && (*pte & PTE_COW)) {
+        
+        uint64 pa = PTE2PA(*pte);
+        //至少被两个进程读取，给当前写入的进程分家
+        if(get_page_ref(pa) > 1) {
+          void *new_pa = alloc_page();
+          if (!new_pa) 
+            panic("COW: Out of physical memory.\n");
+          memcpy(new_pa, (void *)pa, PGSIZE);
+          *pte = PA2PTE((uint64)new_pa) | ((*pte & 0x3ff) & ~PTE_COW) | PTE_W;
 
+          free_page((void *)pa);
+        } else {
+          *pte |= PTE_W;
+          *pte &= ~PTE_COW;
+        }
+        flush_tlb();
+        return;
+      }
+
+      // --- 预留位置：lab2_3 ---
+      // 判断条件通常是：stval 是否在用户栈底部的合法范围内
+      // if (stval < USER_STACK_TOP && stval >= USER_STACK_LIMIT) {
+      //    ... 实现 alloc_page 和 user_vm_map ...
+      //    return;
+      // }
+
+      //可能存在的非法访问
+      sprint("Unhandled store page fault: %lx\n", stval);
+      panic("Illegal memory access or Stack Overflow.\n");
       break;
+    }
+      
     default:
       sprint("unknown page fault.\n");
       break;

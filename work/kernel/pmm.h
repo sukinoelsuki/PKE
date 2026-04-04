@@ -1,6 +1,8 @@
 #ifndef _PMM_H_
 #define _PMM_H_
 
+#include "riscv.h"
+
 //减去起始位，算出index
 #define PA_TO_IDX(pa) (((uint64)(pa) - DRAM_BASE) >> 12) 
 //最大的页表数
@@ -12,6 +14,8 @@ void pmm_init();
 void* alloc_page();
 // Free an allocated page
 void free_page(void* pa);
+
+short get_page_ref(uint64 pa);
 
 void get_page(void *pa);
 
