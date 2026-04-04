@@ -257,11 +257,15 @@ int do_fork( process* parent)
 
       //´úÂë¶ÎĞŞ¸Ä£¬Ö»¶Á£¬¹ÒÔØ¼´¿É¡£
       case CODE_SEGMENT: {
-        sprint("Forking Code: va 0x%lx, npages %d\n", parent->mapped_info[i].va, parent->mapped_info[i].npages);
+        //sprint("Forking Code: va 0x%lx, npages %d\n", parent->mapped_info[i].va, parent->mapped_info[i].npages);
+        sprint("do_fork map code segment at pa:%lx of parent to child at va:%lx.\n",
+               lookup_pa((pagetable_t)parent->pagetable, parent->mapped_info[i].va), parent->mapped_info[i].va);
+               
         for (uint32 current_page = 0; current_page < parent->mapped_info[i].npages; ++current_page) {
           uint64 va = parent->mapped_info[i].va + current_page * PGSIZE;
-          user_vm_map((pagetable_t)child->pagetable, va, PGSIZE,
-                      lookup_pa((pagetable_t)parent->pagetable, va), prot_to_type(PROT_READ | PROT_EXEC, 1));
+          uint64 pa = lookup_pa((pagetable_t)parent->pagetable, va);
+          user_vm_map((pagetable_t)child->pagetable, va, PGSIZE, 
+                      pa, prot_to_type(PROT_READ | PROT_EXEC, 1));
         }
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;

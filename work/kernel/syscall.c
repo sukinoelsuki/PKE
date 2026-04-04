@@ -98,15 +98,23 @@ ssize_t sys_user_yield() {
 
 // 定义内核侧的空壳函数
 long sys_user_sem_new(int value) { 
-    return 0; 
+  return 0; 
 }
 long sys_user_sem_P(int sem_id) { 
-    return 0; 
+  return 0; 
 }
 long sys_user_sem_V(int sem_id) { 
-    return 0; 
+  return 0; 
 }
 
+//打印物理地址
+uint64 sys_user_printpa(uint64 va) {
+  pte_t *pte = page_walk(current->pagetable, va, 0);
+  if (pte == NULL || !(*pte & PTE_V))
+    return 0;
+  uint64 pa = PTE2PA(*pte);
+  return pa + (va & (PGSIZE - 1));
+}
 //
 // [a0]: the syscall number; [a1] ... [a7]: arguments to the syscalls.
 // returns the code of success, (e.g., 0 means success, fail for otherwise)
@@ -131,12 +139,15 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
     //wait to do
 
     case SYS_user_sem_new:
-  // 这里暂时填个 0 或调用你还没写的内核实现
+  // 这里暂时填个 0 ,调用还没写的内核实现
       return sys_user_sem_new(a1); 
     case SYS_user_sem_P:
       return sys_user_sem_P(a1);
     case SYS_user_sem_V:
       return sys_user_sem_V(a1);
+    
+    case SYS_user_printpa:
+      return (long)sys_user_printpa(a1);
 
     default:
       panic("Unknown syscall %ld \n", a0);
