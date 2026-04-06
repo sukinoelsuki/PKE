@@ -224,4 +224,19 @@ static inline void flush_tlb(void) { asm volatile("sfence.vma zero, zero"); }
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t;  // 512 PTEs
 
+//提供上锁解锁接口，在 sync_utils.S 里可找到
+extern void spin_lock(volatile int *lock);
+extern void spin_unlock(volatile int *lock);
+
+//定义全局spinlock_t 变量类型
+#ifndef _SPINLOCK_T_
+#define _SPINLOCK_T_
+
+typedef struct {
+  volatile int lock;
+} spinlock_t;
+
+#endif
+
+
 #endif

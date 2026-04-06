@@ -69,10 +69,17 @@ pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
     } else { //PTE invalid (not exist).
       // allocate a page (to be the new pagetable), if alloc == 1
       if( alloc && ((pt = (pte_t *)alloc_page(1)) != 0) ){
+
+        page_ref_share((void *)pt);
+        
         memset(pt, 0, PGSIZE);
         // writes the physical address of newly allocated page to pte, to establish the
         // page table tree.
-        *pte = PA2PTE(pt) | PTE_V;
+        if() {
+          *pte = PA2PTE(pt) | PTE_V;
+        } else {
+          
+        }
       }else //returns NULL, if alloc == 0, or no more physical page remains
         return 0;
     }
@@ -123,6 +130,13 @@ void kern_vm_init(void) {
 
   // allocate a page (t_page_dir) to be the page directory for kernel. alloc_page is defined in kernel/pmm.c
   t_page_dir = (pagetable_t)alloc_page();
+
+  if (t_page_dir == NULL) {
+    panic("kern_vm_init: out of memory for kernel page directory!\n");
+  }
+  //
+  page_ref_share((void *)t_page_dir);
+
   // memset is defined in util/string.c
   memset(t_page_dir, 0, PGSIZE);
 
