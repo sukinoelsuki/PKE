@@ -52,12 +52,13 @@ void handle_mtimer_trap() {
 // stval: the virtual address that causes pagefault when being accessed.
 //
 void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
+  
   if (mcause == HEAP_SEGMENT)
     sprint("handle_page_fault: %lx\n", stval);
+
   switch (mcause) {
     case CAUSE_STORE_PAGE_FAULT: {
-      // TODO (lab2_3): implement the operations that solve the page fault to
-      // dynamically increase application stack.
+      
       // hint: first allocate a new physical page, and then, maps the new page to the
       // virtual address that causes the page fault.
       pte_t *pte = page_walk(current->pagetable, stval, 0);

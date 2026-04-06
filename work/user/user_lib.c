@@ -7,9 +7,9 @@
 
 #include "user_lib.h"
 
-uint64 do_user_call(uint64 sysnum, uint64 a1, uint64 a2, uint64 a3, uint64 a4, uint64 a5, uint64 a6,
+ssize_t do_user_call(uint64 sysnum, uint64 a1, uint64 a2, uint64 a3, uint64 a4, uint64 a5, uint64 a6,
                  uint64 a7) {
-  int ret;
+  ssize_t ret;
 
   // before invoking the syscall, arguments of do_user_call are already loaded into the argument
   // registers (a0-a7) of our (emulated) risc-v machine.
