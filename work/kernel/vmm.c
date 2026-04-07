@@ -75,7 +75,7 @@ pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
         memset(pt, 0, PGSIZE);
         // writes the physical address of newly allocated page to pte, to establish the
         // page table tree.
-        if() {
+        if(0) {//æœªå¡«
           *pte = PA2PTE(pt) | PTE_V;
         } else {
           
@@ -169,7 +169,7 @@ void *user_va_to_pa(pagetable_t page_dir, void *va) {
   if (pte == 0 || (*pte & PTE_V) == 0)
      return NULL;
 
-  uint64 pa = PTE2PA(*pte) | ((uint64)va & (PGSIZE - 1)); //×ª»»µØÖ·¼ÓÉÏÆ«ÒÆÁ¿¡£
+  uint64 pa = PTE2PA(*pte) | ((uint64)va & (PGSIZE - 1)); //è½¬æ¢åœ°å€åŠ ä¸Šåç§»é‡ã€‚
 
   return (void*)pa;
 }

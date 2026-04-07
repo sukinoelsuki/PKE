@@ -96,7 +96,7 @@ ssize_t sys_user_yield() {
 }
 
 
-// 定义内核侧的空壳函数
+// 瀹氫箟鍐呮牳渚х殑绌哄３鍑芥暟
 long sys_user_sem_new(int value) { 
   return 0; 
 }
@@ -107,7 +107,7 @@ long sys_user_sem_V(int sem_id) {
   return 0; 
 }
 
-//打印物理地址
+//鎵撳嵃鐗╃悊鍦板潃
 uint64 sys_user_printpa(uint64 va) {
   pte_t *pte = page_walk(current->pagetable, va, 0);
   if (pte == NULL || !(*pte & PTE_V))
@@ -139,7 +139,7 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
     //wait to do
 
     case SYS_user_sem_new:
-  // 这里暂时填个 0 ,调用还没写的内核实现
+  // 杩欓噷鏆傛椂濉釜 0 ,璋冪敤杩樻病鍐欑殑鍐呮牳瀹炵幇
       return sys_user_sem_new(a1); 
     case SYS_user_sem_P:
       return sys_user_sem_P(a1);
