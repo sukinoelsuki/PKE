@@ -30,11 +30,14 @@ Thumbs.db
 #vscode配置文件夹
 .vscode
 
-#参照源文件
+# 参照源文件
 riscv-pke/
 
-#编译产物
+# 编译产物
 obj/
 
-#具体二进制产物
+# 具体二进制产物
 riscv_pke
+
+# 待实现
+todo_list.txt

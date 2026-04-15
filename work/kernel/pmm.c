@@ -27,26 +27,6 @@ typedef struct node {
 // g_free_mem_list is the head of the list of free physical memory pages
 static list_node g_free_mem_list;
 
-// 如果 *addr == expected, 则将 *addr 设为 new，并返回 1 (成功)
-// 否则返回 0 (失败，说明被别人抢先了)
-static inline int atomic_cas_pte(pte_t *addr, pte_t expected, pte_t new_val) {
-    int success;
-    __asm__ __volatile__ (
-        "1: lr.d %0, (%1)       \n" // 读取 addr 指向的值到 %0，并挂上“保留标记”
-        "   bne %0, %2, 2f      \n" // 如果读取的值 != expected，跳转到 2（失败）
-        "   sc.d %0, %3, (%1)   \n" // 尝试将 new_val 写入 addr，结果存入 %0
-        "   bnez %0, 1b         \n" // 如果 %0 不为 0，说明写入期间有干扰，回到 1 重试
-        "   li %0, 1            \n" // 走到这说明写入成功，设置返回值为 1
-        "   j 3f                \n" // 跳到结束
-        "2: li %0, 0            \n" // 失败分支：设置返回值为 0
-        "3:                     \n"
-        : "=&r" (success)           // %0: 输出变量
-        : "r" (addr), "r" (expected), "r" (new_val) // %1, %2, %3: 输入变量
-        : "memory"                  // 告诉编译器内存发生了变化
-    );
-    return success;
-}
-
 //
 // actually creates the freepage list. each page occupies 4KB (PGSIZE), i.e., small page.
 // PGSIZE is defined in kernel/riscv.h, ROUNDUP is defined in util/functions.h.
@@ -54,12 +34,11 @@ static inline int atomic_cas_pte(pte_t *addr, pte_t expected, pte_t new_val) {
 static void create_freepage_list(uint64 start, uint64 end) {
   g_free_mem_list.next = 0;
   for (uint64 p = ROUNDUP(start, PGSIZE); p + PGSIZE < end; p += PGSIZE) {
-    //提前置1，便于在free_page时将节点仍进链表，完成逻辑闭环。
-    spin_lock(&page_ref_lock.lock);
-    page_ref[PA_TO_IDX(p)] = 1;
-    spin_unlock(&page_ref_lock.lock);
-
-    free_page( (void *)p );
+    // 提前置0，与 free_page 逻辑分开，函数仅在主核初始化时调用，无需另外加锁
+    page_ref[PA_TO_IDX(p)] = 0;
+    list_node *n = (list_node *)p;
+    n->next = g_free_mem_list.next;
+    g_free_mem_list.next = n;
   }
 }
 
@@ -73,25 +52,23 @@ void free_page(void *pa) {
   //维护index数组，实时管理page生命周期。
   
   int page_index = PA_TO_IDX(pa);
-
-  spin_lock(&page_ref_lock.lock);
+/*
+  lock_acquire(&page_ref_lock.lock);
   if (page_ref[page_index] <= 0) {
     //unlock before exit.
-    spin_unlock(&page_ref_lock.lock);
+    lock_release(&page_ref_lock.lock);
     panic("free_page: double free or ref count error!");
   }
-  
-  page_ref[page_index]--;
 
-  spin_lock(&pmm_lock.lock);
-  if (page_ref[page_index] == 0) {
+  page_ref[page_index]--;
+*/
+  if (page_ref_dec_and_test((void *)&page_ref[page_index])) {
+    lock_acquire(&pmm_lock.lock);
     list_node *n = (list_node *)pa;
     n->next = g_free_mem_list.next;
     g_free_mem_list.next = n;
+    lock_release(&pmm_lock.lock);
   }
-  spin_unlock(&pmm_lock.lock);
-  spin_unlock(&page_ref_lock.lock);
-
 }
 
 //
@@ -100,17 +77,26 @@ void free_page(void *pa) {
 //
 void *alloc_page(void) {
 
-  // lock
-  spin_lock(&pmm_lock.lock);
+  // lock 锁住内存块链表，只能Spinlock，其它原子操作难以
+  // 操作链表结构，但是存在无锁链表（容错？复杂度？）
+  lock_acquire(&pmm_lock.lock);
 
   list_node *n = g_free_mem_list.next;
-  if (n) {
+  if (likely(n != NULL)) {
     g_free_mem_list.next = n->next;
+
+    // 未从链表中取出来，n 所代表的地址不会被访问到？
+    // 所以直接进行 page_ref[] 的操作，不会影响到其
+    // 它核。其他核被 pmm_lock 锁住，不会访问到同一
+    // 地址
     page_ref[PA_TO_IDX(n)] = 1;
+
+  } else {
+    panic("alloc_page : Out of memory!\n");
   }
 
   // unlock
-  spin_unlock(&pmm_lock.lock);
+  lock_release(&pmm_lock.lock);
 
   return (void *)n;
 }
@@ -122,24 +108,23 @@ void page_ref_share(void *pa) {
   spin_unlock(&page_ref_lock.lock);
 }
 
-//不带锁，简单事务接口。
+// 原子操作事务接口。
 //return value in page_ref
-short __get_page_ref(void* pa) {
+short get_page_ref(void* pa) {
   return page_ref[PA_TO_IDX(pa)];
 }
 
 //COW fork add
-void __page_ref_inc(void* pa) {
+void page_ref_inc(void* pa) {
   page_ref[PA_TO_IDX(pa)]++;
 }
 
-void __page_ref_dec(void *pa) {
-  page_ref[PA_TO_IDX(pa)]--;
-  return (page_ref[PA_TO_IDX(pa)] == 0);
+int page_ref_dec_and_test(void *pa) {
+  return (atomic_fetch_add(&page_ref[PA_TO_IDX(pa)], -1) == 1);
 }
 
 //check shared or not
-int __is_shared_page(void* pa) {
+int is_shared_page(void* pa) {
   return page_ref[PA_TO_IDX(pa)] > 1;
 }
 

@@ -3,6 +3,7 @@
 
 #include "util/types.h"
 #include "config.h"
+#include "sync_utils.h"
 
 // fields of mstatus, the Machine mode Status register
 #define MSTATUS_MPP_MASK (3L << 11) // previous mode mask
@@ -224,9 +225,13 @@ static inline void flush_tlb(void) { asm volatile("sfence.vma zero, zero"); }
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t;  // 512 PTEs
 
-//提供上锁解锁接口，在 sync_utils.S 里可找到
+
+/*  封装原子操作，提供接口在 sync_utils.h中*/
+// 提供上锁解锁接口，在 sync_utils.S 里可找到
 extern void spin_lock(volatile int *lock);
 extern void spin_unlock(volatile int *lock);
+
+
 
 //定义全局spinlock_t 变量类型
 #ifndef _SPINLOCK_T_

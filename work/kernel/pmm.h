@@ -15,16 +15,16 @@ void* alloc_page();
 // Free an allocated page
 void free_page(void* pa);
 
-//page sharing issue
+//page issue with atomic issue
 
 void page_ref_share(void *pa);
 
-short __get_page_ref(void* pa);
+short get_page_ref(void* pa);
 
-void __page_ref_inc(void *pa);
+void page_ref_inc(void *pa);
 
-void __page_ref_dec(void *pa);
+int page_ref_dec_and_test(void *pa);
 
-int __is_shared_page(void *pa);
+int is_shared_page(void *pa);
 
 #endif

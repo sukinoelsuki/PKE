@@ -66,22 +66,21 @@ pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
     if (*pte & PTE_V) {  //PTE valid
       // phisical address of pagetable of next level
       pt = (pagetable_t)PTE2PA(*pte);
-    } else { //PTE invalid (not exist).
-      // allocate a page (to be the new pagetable), if alloc == 1
-      if( alloc && ((pt = (pte_t *)alloc_page(1)) != 0) ){
-
-        page_ref_share((void *)pt);
-        
-        memset(pt, 0, PGSIZE);
+    } 
+    else if (alloc && (pt = (pte_t *)alloc_page(1)) != 0) { //PTE invalid (not exist).
         // writes the physical address of newly allocated page to pte, to establish the
         // page table tree.
-        if(0) {//未填
-          *pte = PA2PTE(pt) | PTE_V;
-        } else {
-          
+        if(atomic_cas((void *)pte, 0, PA2PTE(pt) | PTE_V) == 0) {
+          free_page((void *)pt);
+          pt = PTE2PA(*pte);
+          continue; // 可能其它核完成了全部分配，顺着页表更新，返回最新的三级页表项。
         }
-      }else //returns NULL, if alloc == 0, or no more physical page remains
-        return 0;
+      // allocate a page (to be the new pagetable), if alloc == 1
+        page_ref_share((void *)pt);
+        memset(pt, 0, PGSIZE);
+    } else {
+      //returns NULL, if alloc == 0, or no more physical page remains
+      return 0;
     }
   }
 
