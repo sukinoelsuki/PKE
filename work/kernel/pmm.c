@@ -62,7 +62,7 @@ void free_page(void *pa) {
 
   page_ref[page_index]--;
 */
-  if (page_ref_dec_and_test((void *)&page_ref[page_index])) {
+  if (page_ref_dec_and_test(&page_ref[page_index])) {
     lock_acquire(&pmm_lock.lock);
     list_node *n = (list_node *)pa;
     n->next = g_free_mem_list.next;
