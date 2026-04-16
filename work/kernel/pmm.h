@@ -3,10 +3,16 @@
 
 #include "riscv.h"
 
-//减去起始位，算出index
+// 减去起始位，算出index
 #define PA_TO_IDX(pa) (((uint64)(pa) - DRAM_BASE) >> 12) 
-//最大的页表数
+
+// 最大的页表数
 #define MAX_PAGE 32768
+
+// 最高物理块的阶，需要在比赛环境下够用
+// 最高阶的物理块大小为 16Mb
+// 支持 Megapage (9 阶 2MB)
+#define MAX_ORDER 12
 
 // Initialize phisical memeory manager
 void pmm_init();

@@ -162,4 +162,95 @@ void pmm_init() {
 
   // create the list of free pages
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
+  
+  // 采用 Buddy_System 来管理物理内存块
+  /*
+  init_Buddy_System(free_mem_start_addr, free_mem_end_addr);
+  */
 }
+
+
+// 下面篇幅用于实现 Buddy System，在实现前，需要保留原有的链表结构逻辑
+// Buddy System 的各项构建必须封装在 pmm.c 中，仅向外界提供调用接口，
+// 防止泄露。
+
+#ifndef __Buddy_System__
+#define __Buddy_System__
+
+//#define __DEBUG_BUDDY__
+#ifdef __DEBUG_BUDDY__
+  #define MARK_COLOR(p, val) ((p)->debug_tag = val)
+#else 
+  #define MARK_COLOR(p, val)
+#endif
+
+// 链表节点，双向列表实现 O（1） 增删
+// 和原有链表重名了，但是仅是增加了结构，并不会报错
+typedef struct List_Node {
+  list_node* pre;
+  list_node* next;
+} list_node;
+
+// 整体系统
+typedef struct Buddy_System{
+  list_node free_area[MAX_ORDER];
+  spinlock_t buddy_lock;
+} buddy_system;
+
+typedef struct page {
+  uint32 is_head;
+  uint32 order;
+  list_node page_node;
+}page_t;
+
+
+// pages 数组，由内核启动时直接分配
+page_t *pages;
+
+// 当前内存的主 Buddy System
+buddy_system main_buddy;
+
+// 初始化物理空间，在 pmm_init() 中被调用
+// 是否加上 inline？static 保证仅在该文件中被使用
+static inline uint64 init_Buddy_System(uint64 start_addr, uint64 end_addr) {
+
+  // 首先初始化 pages，需要保证 is_head 初值为 0，对于初始的每个页 Order 应该也是 0，
+  // 节点的指向也应该是空，这些节点还不需要插入任何一个 Order 的队列，目前是一个整体，
+  // 这个整体现在应该由一个或多个代表来表示，这两个代表是对阶后产生的。
+  // 要根据大小确定代表的 PFN 编号，将页信息更改，采用表头插入插入链表。
+  // 可见 Buddy System 有个不可忽视的问题，申请低阶页时向高阶页申请划分空间，这个操作
+  // 必须是常数级的，而且尽可能要快。尤其是初始化三级页表的过程，如果上来就全部分配，必
+  // 然造成巨大的开销，开销在划分最小页表上，所以虚拟地址可能要按需使用，而不是上来就
+  // map 整个虚拟空间，这样也会造成太多碎块，导致出现普通 Buddy System 无法提供连续空
+  // 间的情况。
+  memset(pages, 0, MAX_PAGE * sizeof(page_t));
+
+  // 初始化每阶的链表头结点，将其置为节点自己
+  for (int i = 0; i < MAX_ORDER; ++i) {
+    main_buddy.free_area[i].next = &main_buddy.free_area[i];
+    main_buddy.free_area[i].pre = &main_buddy.free_area[i];
+  }
+
+  // 极其简单的初始化锁结构，因为现在实现的锁结构很简单，待扩充
+  main_buddy.buddy_lock.lock = 0;
+
+  // 初始化给定的物理空间，进行分块
+  // 分块的前提是地址对齐
+  uint64 curr_addr = ROUNDUP(start_addr, PGSIZE);
+  uint64 stop_addr = ROUNDDOWN(end_addr, PGSIZE);
+
+  while (curr_addr < stop_addr) {
+    // 当前的起始物理地址需要对齐，取最低有效位作为 "limit"
+    
+    // 计算剩余空间大小，取最高有效位作为 "limit"
+
+  }
+  int PFN_index = ROUNDDOWN((end_addr - start_addr), 4096);
+  // 在人的角度能看到当前的内存是固定的，所以其实能直接填入信息，但是为了严谨，普适的系
+  // 统应该有计算最低有效位，然后将填入 pages 信息以及插入对应阶数的链表。
+  // 如何快速确定最低有效位？内存大小的逻辑是不是支持我们仅去寻找一位？因为按大小来说更
+  // 可能是 2 的 n 次方，而不是其他的大小。
+
+}
+
+#endif
