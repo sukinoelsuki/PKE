@@ -31,7 +31,7 @@ typedef struct page {
     union {
         uint64 raw_status;
         struct {
-            uint32 is_free : 1;  // 空闲标记，1 表示空闲
+            uint32 is_free : 1;  // 空闲标记，1 表示空闲、能够使用。
             uint32 is_head : 1;  // 领头羊标记，仅有块首有标记，用于判断自己是否是“随从”
             uint32 order   : 5;  // 阶数，表明当前 page 代表的连续页块大小
             uint32 alloc   : 3;  // 归属标记，标识属于的内存系统，Buddy System/ Slab、Slub/Per-CPU Cache/内核静态预留（不可释放）
@@ -167,6 +167,8 @@ int is_shared_page(void* pa) {
 void pmm_init() {
   
   // start of kernel program segment
+  // 在链接文件中写锚定了，内核从 0x80000000 开始，
+  // 原始的固件信息可能被迁移到了后面
   uint64 g_kernel_start = KERN_BASE;
   uint64 g_kernel_end = (uint64)&_end;
 
@@ -178,6 +180,7 @@ void pmm_init() {
   free_mem_start_addr = ROUNDUP(g_kernel_end , PGSIZE);
   // recompute g_mem_size to limit the physical memory space that our riscv-pke kernel
   // needs to manage
+  // PKE_MAX_ALLOWABLE_RAM 可以动态的分配，修改宏定义即可
   g_mem_size = MIN(PKE_MAX_ALLOWABLE_RAM, g_mem_size);
   if( g_mem_size < pke_kernel_size )
     panic( "Error when recomputing physical memory size (g_mem_size).\n" );
@@ -189,6 +192,22 @@ void pmm_init() {
 
   sprint("kernel memory manager is initializing ...\n");
 
+  // pages 按 8 位对齐，与 status 对齐，保证 status 读写时的原子性
+  pages = (page_t *)ROUNDUP((uint64)_end, 8);
+
+  nr_pages = g_mem_size / PGSIZE;
+  uint64 metaspace = nr_pages * sizeof(page_t);
+  uint64 buddy_start = ROUNDUP((metaspace + (uint64)pages), PGSIZE);
+  uint64 buddy_end = ROUNDDOWN(free_mem_end_addr, PGSIZE);
+
+  memset(pages, 0, metaspace);
+  
+  // 初始 alloc 置为 3，保证内核部分代码不被修改
+  for (int i = 0; i < nr_pages; ++i) {
+    pages[i].status.alloc = 3;
+  }
+
+  buddy_system_init(buddy_start, buddy_end);
   // create the list of free pages
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
   
@@ -215,6 +234,12 @@ void pmm_init() {
 
 // 当前内存的主 Buddy System
 buddy_system main_buddy;
+
+void list_node_add(page_t *p, uint32 order) {
+  p->node.next = main_buddy.free_area[order].next;
+  p->node.pre = &main_buddy.free_area[order];
+  main_buddy.free_area[order].next = p;
+}
 
 // 初始化物理空间，在 pmm_init() 中被调用
 // 是否加上 inline？static 保证仅在该文件中被使用
@@ -243,15 +268,66 @@ static inline uint64 buddy_system_init(uint64 start_addr, uint64 end_addr) {
     // 计算剩余空间大小，取最高有效位作为 "limit"
     uint64 remaining_pages = (stop_addr - curr_addr) / PGSIZE;
     uint64 limit_order = 63 - __builtin_clzll(remaining_pages);
-    
 
+    uint64 order = align_order < limit_order ? align_order : limit_order;
+    if (order > MAX_ORDER) order = MAX_ORDER - 1;
+
+    uint64 PFN = (curr_addr - stop_addr) / PGSIZE;
+    page_t *p = &pages[PFN];
+    p->status.alloc = 0;
+    p->status.is_head = 1;
+    p->status.is_free = 1;
+    p->status.order = order;
+    list_node_add(p, order);
+
+    curr_addr += (1ULL << order) * PGSIZE;
   }
-  int PFN_index = ROUNDDOWN((end_addr - start_addr), 4096);
-  // 在人的角度能看到当前的内存是固定的，所以其实能直接填入信息，但是为了严谨，普适的系
-  // 统应该有计算最低有效位，然后将填入 pages 信息以及插入对应阶数的链表。
-  // 如何快速确定最低有效位？内存大小的逻辑是不是支持我们仅去寻找一位？因为按大小来说更
-  // 可能是 2 的 n 次方，而不是其他的大小。
+}
 
+void buddy_split(uint32 bigorder, uint32 order) {
+  lock_acquire(main_buddy.buddy_lock.lock);
+  uint32 curr_order = order + 1;
+  while (curr_order < MAX_ORDER) {
+    if (main_buddy.free_area[curr_order].next != NULL) {
+
+    }
+  }
+}
+
+// 不判断是否为空
+void pop_list_head(uint32 order) {
+  list_node *first_node = main_buddy.free_area[order].next;
+}
+
+void *buddy_alloc(uint32 order) {
+
+  // 操作链表，只能上 Spinlock
+  lock_acquire(main_buddy.buddy_lock.lock);
+
+  for(int i = order; i < MAX_ORDER; ++i) {
+    if (main_buddy.free_area[i].next == NULL)
+      continue;
+    if (i > order) 
+      buddy_split(i, order);
+    
+    list_node *free_node = main_buddy.free_area[order].next;
+    lock_release(main_buddy.buddy_lock.lock);
+    
+    
+  }
+
+  return NULL;
+  list_node *free_node;
+  if (main_buddy.free_area[order].next != NULL) {
+    free_node = main_buddy.free_area[order].next;
+    main_buddy.free_area[order].next = free_node->next;
+    if (free_node->next != NULL)
+      free_node->next->pre = &main_buddy.free_area[order];
+
+    lock_release(main_buddy.buddy_lock.lock);
+    return (void *)free_node;
+  }
+  lock_release(main_buddy.buddy_lock.lock);
 }
 
 #endif

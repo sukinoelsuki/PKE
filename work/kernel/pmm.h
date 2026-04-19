@@ -3,6 +3,12 @@
 
 #include "riscv.h"
 
+#define offsetof(TYPE, MEMBER) ((size_t) & ((TYPE *) 0)->MEMBER)
+#define container_of(ptr, type, member) 
+
+#define list_entry(ptr, type, member) \
+    container_of(ptr, type, member)
+
 // 减去起始位，算出index
 #define PA_TO_IDX(pa) (((uint64)(pa) - DRAM_BASE) >> 12) 
 
@@ -32,5 +38,7 @@ void page_ref_inc(void *pa);
 int page_ref_dec_and_test(void *pa);
 
 int is_shared_page(void *pa);
+
+void *buddy_alloc(uint32 order);
 
 #endif
