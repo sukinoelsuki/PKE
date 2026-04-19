@@ -9,14 +9,44 @@
 // _end is defined in kernel/kernel.lds, it marks the ending (virtual) address of PKE kernel
 extern char _end[];
 
+// g_mem_size is defined in spike_interface/spike_memory.c, it indicates the size of our
+// (emulated) spike machine. g_mem_size's value is obtained when initializing HTIF. 
+extern uint64 g_mem_size;
+
+// 链表节点，双向列表实现 O（1） 增删
+// 和原有链表重名了，但是仅是增加了结构，并不会报错
+typedef struct List_Node {
+  list_node* pre;
+  list_node* next;
+} list_node;
+
+// 整体 Buddy 系统
+typedef struct Buddy_System{
+  spinlock_t buddy_lock;
+  list_node free_area[MAX_ORDER];
+} __attribute__((aligned(64))) buddy_system;
+
+// 记录每个页的元数据，同时提供染色信息，便于实现 O(1) 查询修改操作
+typedef struct page {
+    union {
+        uint64 raw_status;
+        struct {
+            uint32 is_free : 1;  // 空闲标记，1 表示空闲
+            uint32 is_head : 1;  // 领头羊标记，仅有块首有标记，用于判断自己是否是“随从”
+            uint32 order   : 5;  // 阶数，表明当前 page 代表的连续页块大小
+            uint32 alloc   : 3;  // 归属标记，标识属于的内存系统，Buddy System/ Slab、Slub/Per-CPU Cache/内核静态预留（不可释放）
+            uint32 cpu_id  : 6;  // 亲和性标记，属于哪个核（最多支持 64），便于实现跨核释放
+            uint32 ref     : 16; // 引用计数，实现 COW
+            uint32 color   : 8;  // 审计染色，存储父块标记，便于追踪内存来源，排查错误
+        };
+    } status;
+    list_node node;
+} __attribute__((aligned(8))) page_t; // 注意！保证了 status 的原子性，但 node 仍大概率截断。因修改 node 概率小（存疑）
+
 // 物理页描述符数组指针
 page_t *pages;
 // total num of pa pages
 uint64 nr_pages;
-
-// g_mem_size is defined in spike_interface/spike_memory.c, it indicates the size of our
-// (emulated) spike machine. g_mem_size's value is obtained when initializing HTIF. 
-extern uint64 g_mem_size;
 
 static uint64 free_mem_start_addr;  //beginning address of free memory
 static uint64 free_mem_end_addr;    //end address of free memory (not included)
@@ -140,22 +170,19 @@ void pmm_init() {
   uint64 g_kernel_start = KERN_BASE;
   uint64 g_kernel_end = (uint64)&_end;
 
-  pmm_lock.lock = 0;
-  page_ref_lock.lock = 0;
-
   uint64 pke_kernel_size = g_kernel_end - g_kernel_start;
   sprint("PKE kernel start 0x%lx, PKE kernel end: 0x%lx, PKE kernel size: 0x%lx .\n",
     g_kernel_start, g_kernel_end, pke_kernel_size);
 
   // free memory starts from the end of PKE kernel and must be page-aligined
   free_mem_start_addr = ROUNDUP(g_kernel_end , PGSIZE);
-
   // recompute g_mem_size to limit the physical memory space that our riscv-pke kernel
   // needs to manage
   g_mem_size = MIN(PKE_MAX_ALLOWABLE_RAM, g_mem_size);
   if( g_mem_size < pke_kernel_size )
     panic( "Error when recomputing physical memory size (g_mem_size).\n" );
 
+  
   free_mem_end_addr = g_mem_size + DRAM_BASE;
   sprint("free physical memory address: [0x%lx, 0x%lx] \n", free_mem_start_addr,
     free_mem_end_addr - 1);
@@ -186,26 +213,13 @@ void pmm_init() {
   #define MARK_COLOR(p, val)
 #endif
 
-// pages 数组，由内核启动时直接分配
-page_t *pages;
-
 // 当前内存的主 Buddy System
 buddy_system main_buddy;
 
 // 初始化物理空间，在 pmm_init() 中被调用
 // 是否加上 inline？static 保证仅在该文件中被使用
-static inline uint64 init_Buddy_System(uint64 start_addr, uint64 end_addr) {
-
-  // 首先初始化 pages，需要保证 is_head 初值为 0，对于初始的每个页 Order 应该也是 0，
-  // 节点的指向也应该是空，这些节点还不需要插入任何一个 Order 的队列，目前是一个整体，
-  // 这个整体现在应该由一个或多个代表来表示，这两个代表是对阶后产生的。
-  // 要根据大小确定代表的 PFN 编号，将页信息更改，采用表头插入插入链表。
-  // 可见 Buddy System 有个不可忽视的问题，申请低阶页时向高阶页申请划分空间，这个操作
-  // 必须是常数级的，而且尽可能要快。尤其是初始化三级页表的过程，如果上来就全部分配，必
-  // 然造成巨大的开销，开销在划分最小页表上，所以虚拟地址可能要按需使用，而不是上来就
-  // map 整个虚拟空间，这样也会造成太多碎块，导致出现普通 Buddy System 无法提供连续空
-  // 间的情况。
-  memset(pages, 0, MAX_PAGE * sizeof(page_t));
+static inline uint64 buddy_system_init(uint64 start_addr, uint64 end_addr) {
+  // pages 数组的初始化在 pmm_init 中完成
 
   // 初始化每阶的链表头结点，将其置为节点自己
   for (int i = 0; i < MAX_ORDER; ++i) {
