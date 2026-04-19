@@ -8,6 +8,12 @@
 
 // _end is defined in kernel/kernel.lds, it marks the ending (virtual) address of PKE kernel
 extern char _end[];
+
+// 物理页描述符数组指针
+page_t *pages;
+// total num of pa pages
+uint64 nr_pages;
+
 // g_mem_size is defined in spike_interface/spike_memory.c, it indicates the size of our
 // (emulated) spike machine. g_mem_size's value is obtained when initializing HTIF. 
 extern uint64 g_mem_size;
@@ -19,10 +25,6 @@ static short page_ref[MAX_PAGE] = {0};
 
 static spinlock_t page_ref_lock = {0};
 static spinlock_t pmm_lock = {0};
-
-typedef struct node {
-  struct node *next;
-} list_node;
 
 // g_free_mem_list is the head of the list of free physical memory pages
 static list_node g_free_mem_list;
@@ -184,26 +186,6 @@ void pmm_init() {
   #define MARK_COLOR(p, val)
 #endif
 
-// 链表节点，双向列表实现 O（1） 增删
-// 和原有链表重名了，但是仅是增加了结构，并不会报错
-typedef struct List_Node {
-  list_node* pre;
-  list_node* next;
-} list_node;
-
-// 整体系统
-typedef struct Buddy_System{
-  list_node free_area[MAX_ORDER];
-  spinlock_t buddy_lock;
-} buddy_system;
-
-typedef struct page {
-  uint32 is_head;
-  uint32 order;
-  list_node page_node;
-}page_t;
-
-
 // pages 数组，由内核启动时直接分配
 page_t *pages;
 
@@ -240,9 +222,14 @@ static inline uint64 init_Buddy_System(uint64 start_addr, uint64 end_addr) {
   uint64 stop_addr = ROUNDDOWN(end_addr, PGSIZE);
 
   while (curr_addr < stop_addr) {
-    // 当前的起始物理地址需要对齐，取最低有效位作为 "limit"
     
+    // 当前的起始物理地址需要对齐，取最低有效位作为 "limit"
+    uint64 align_order = __builtin_ctzll(curr_addr / PGSIZE);
+
     // 计算剩余空间大小，取最高有效位作为 "limit"
+    uint64 remaining_pages = (stop_addr - curr_addr) / PGSIZE;
+    uint64 limit_order = 63 - __builtin_clzll(remaining_pages);
+    
 
   }
   int PFN_index = ROUNDDOWN((end_addr - start_addr), 4096);
