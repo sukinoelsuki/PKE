@@ -6,6 +6,9 @@
 #include "memlayout.h"
 #include "spike_interface/spike_utils.h"
 
+// 按照写定的 page_t 结构，将节点的地址转换成 page 的首地址
+#define node_to_page(ptr) ((page_t *)((char *)(ptr) - 8))
+
 // _end is defined in kernel/kernel.lds, it marks the ending (virtual) address of PKE kernel
 extern char _end[];
 
@@ -16,9 +19,31 @@ extern uint64 g_mem_size;
 // 链表节点，双向列表实现 O（1） 增删
 // 和原有链表重名了，但是仅是增加了结构，并不会报错
 typedef struct List_Node {
-  list_node* pre;
+  list_node* prev;
   list_node* next;
 } list_node;
+
+// 相关 list_node 双向链表操作
+// 删去 prev 到 next 间的所有节点
+static inline void __list_del(list_node *prev, list_node *next) {
+  next->prev = prev;
+  prev->next = next;
+}
+
+// 将一段 new_list 插入到 prev 节点后
+static inline void __list_add(list_node *prev, list_node* new_head, list_node *new_tail) {
+  new_head->prev = prev;
+  new_tail->next = prev->next;
+  prev->next->prev = new_tail;
+  prev->next = new_head;
+}
+
+// 不判断是否为空，保证安全
+static inline list_node* list_pop(list_node *head) {
+  list_node *node = head->next;
+  __list_del(node->prev, node->next);
+  return node;
+}
 
 // 整体 Buddy 系统
 typedef struct Buddy_System{
@@ -235,21 +260,15 @@ void pmm_init() {
 // 当前内存的主 Buddy System
 buddy_system main_buddy;
 
-void list_node_add(page_t *p, uint32 order) {
-  p->node.next = main_buddy.free_area[order].next;
-  p->node.pre = &main_buddy.free_area[order];
-  main_buddy.free_area[order].next = p;
-}
-
 // 初始化物理空间，在 pmm_init() 中被调用
 // 是否加上 inline？static 保证仅在该文件中被使用
 static inline uint64 buddy_system_init(uint64 start_addr, uint64 end_addr) {
   // pages 数组的初始化在 pmm_init 中完成
 
-  // 初始化每阶的链表头结点，将其置为节点自己
+  // 初始化每阶的链表头结点，构造双向循环链表
   for (int i = 0; i < MAX_ORDER; ++i) {
     main_buddy.free_area[i].next = &main_buddy.free_area[i];
-    main_buddy.free_area[i].pre = &main_buddy.free_area[i];
+    main_buddy.free_area[i].prev = &main_buddy.free_area[i];
   }
 
   // 极其简单的初始化锁结构，因为现在实现的锁结构很简单，待扩充
@@ -278,26 +297,36 @@ static inline uint64 buddy_system_init(uint64 start_addr, uint64 end_addr) {
     p->status.is_head = 1;
     p->status.is_free = 1;
     p->status.order = order;
-    list_node_add(p, order);
+    __list_add(&main_buddy.free_area[order], &p->node, &p->node);
 
     curr_addr += (1ULL << order) * PGSIZE;
   }
 }
 
-void buddy_split(uint32 bigorder, uint32 order) {
-  lock_acquire(main_buddy.buddy_lock.lock);
-  uint32 curr_order = order + 1;
-  while (curr_order < MAX_ORDER) {
-    if (main_buddy.free_area[curr_order].next != NULL) {
-
-    }
+void buddy_split(uint32 big_order, uint32 target_order) {
+  for (int i = big_order; i > target_order; i--) {
+    // 将当前阶第一个空闲的 page 取出来
+    ? : sizeof 函数全部直接转化为宏定义的数据？
+    list_node *n = list_pop(&main_buddy.free_area[i]);
+    page_t *p = node_to_page(n);
+    
+    // 计算当前页的 buddy，以便实现分割
+    // 分割意味着降级了，所以在这一位上加 1 就是它的 buddy
+    uint64 buddy_pfn = ((uint64)p - (uint64)pages) / sizeof(page_t) + (1ULL << (i - 1));
+    page_t *bud = &pages[buddy_pfn];
+    bud->status.alloc = 0;
+    bud->status.is_free = 1;
+    bud->status.is_head = 1;
+    bud->status.order = i - 1;
+    
+    // 将分割开的两个页块从表头插入链表
+    __list_add(&main_buddy.free_area[i - 1], &bud->node, &bud->node);
+    p->status.order = i - 1;
+    // 写作 n 少一些计算，应该会更快
+    __list_add(&main_buddy.free_area[i - 1], n, n);
   }
 }
 
-// 不判断是否为空
-void pop_list_head(uint32 order) {
-  list_node *first_node = main_buddy.free_area[order].next;
-}
 
 void *buddy_alloc(uint32 order) {
 
@@ -307,27 +336,34 @@ void *buddy_alloc(uint32 order) {
   for(int i = order; i < MAX_ORDER; ++i) {
     if (main_buddy.free_area[i].next == NULL)
       continue;
+
     if (i > order) 
       buddy_split(i, order);
     
-    list_node *free_node = main_buddy.free_area[order].next;
+    list_node *free_node = list_pop(&main_buddy.free_area[order]);
+    page_t *p = node_to_page(free_node);
+    p->status.alloc = 0;
+    p->status.is_free = 0;
+    // 在 split 时是否已经置 1 了？这可能是一段可用的空间，而接口仅是当前地址
+    p->status.is_head = 1;
     lock_release(main_buddy.buddy_lock.lock);
-    
-    
+
+    // 返回物理地址 : pfn * 4096 + DRAM_BASE
+    ? : p - pages 是地址？还是数字？
+    uint64 pfn = (uint64)(p - pages);
+    return (void *)(pfn * PGSIZE + DRAM_BASE);
   }
 
-  return NULL;
-  list_node *free_node;
-  if (main_buddy.free_area[order].next != NULL) {
-    free_node = main_buddy.free_area[order].next;
-    main_buddy.free_area[order].next = free_node->next;
-    if (free_node->next != NULL)
-      free_node->next->pre = &main_buddy.free_area[order];
-
-    lock_release(main_buddy.buddy_lock.lock);
-    return (void *)free_node;
-  }
+  // 释放全局锁
   lock_release(main_buddy.buddy_lock.lock);
+  return NULL;
+}
+
+void buddy_free(void *addr) {
+  // 相当耗时的第一个判断，是去掉，在其它地方保证不会放进空指针，
+  // 还是说加上 unlikely() 进行剪枝
+  if (unlikely(addr)) return;
+  
 }
 
 #endif

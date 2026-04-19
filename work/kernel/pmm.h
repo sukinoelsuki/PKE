@@ -3,12 +3,6 @@
 
 #include "riscv.h"
 
-#define offsetof(TYPE, MEMBER) ((size_t) & ((TYPE *) 0)->MEMBER)
-#define container_of(ptr, type, member) 
-
-#define list_entry(ptr, type, member) \
-    container_of(ptr, type, member)
-
 // 减去起始位，算出index
 #define PA_TO_IDX(pa) (((uint64)(pa) - DRAM_BASE) >> 12) 
 
