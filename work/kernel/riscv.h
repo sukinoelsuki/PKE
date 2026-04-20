@@ -237,7 +237,7 @@ extern void spin_unlock(volatile int *lock);
 #ifndef _SPINLOCK_T_
 #define _SPINLOCK_T_
 
-typedef struct {
+typedef struct Spinlock_t {
   volatile int lock;
 } spinlock_t;
 

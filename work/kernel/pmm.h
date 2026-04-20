@@ -18,23 +18,22 @@
 
 // Initialize phisical memeory manager
 void pmm_init();
+
 // Allocate a free phisical page
 void* alloc_page();
-// Free an allocated page
-void free_page(void* pa);
+void *buddy_alloc(uint32 order);
+
+void pfree(void* addr);
+
+
 
 //page issue with atomic issue
 
 void page_ref_share(void *pa);
-
 short get_page_ref(void* pa);
-
 void page_ref_inc(void *pa);
-
 int page_ref_dec_and_test(void *pa);
-
 int is_shared_page(void *pa);
 
-void *buddy_alloc(uint32 order);
 
 #endif
