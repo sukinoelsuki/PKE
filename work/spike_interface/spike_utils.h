@@ -33,9 +33,15 @@ void kassert_fail(const char* s) __attribute__((noreturn));
   do {                               \
     do_panic(s "\n", ##__VA_ARGS__); \
   } while (0)
+
+  
+#ifdef DEBUG
 #define kassert(cond)                    \
   do {                                   \
     if (!(cond)) kassert_fail("" #cond); \
   } while (0)
+#else
+#define kassert(cond) do {} while(0);
+#endif
 
 #endif

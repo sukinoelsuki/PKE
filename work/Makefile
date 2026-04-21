@@ -20,6 +20,14 @@ ifneq (,)
   mabi := -mabi=$(if $(is_32bit),ilp32,lp64)
 endif
 
+# 默认开启 DEBUG 模式
+CFLAGS += -DDEBUGS
+
+ifeq ($(CFG), RELEASE)
+  CFLAGS += -UDEBUGS  # 关闭断言调试
+  CFLAGS += O2         # 开启 O2
+endif
+
 CFLAGS        := -Wall -Werror  -fno-builtin -nostdlib -D__NO_INLINE__ -mcmodel=medany -g -Og -std=gnu99 -Wno-unused -Wno-attributes -fno-delete-null-pointer-checks -fno-PIE $(march)
 COMPILE       	:= $(CC) -MMD -MP $(CFLAGS) $(SPROJS_INCLUDE)
 
