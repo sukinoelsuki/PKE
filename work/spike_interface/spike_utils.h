@@ -1,6 +1,8 @@
 #ifndef _SPIKE_UTILS_H_
 #define _SPIKE_UTILS_H_
 
+#define DEBUG
+
 #include "util/types.h"
 #include "spike_file.h"
 #include "spike_memory.h"
@@ -36,9 +38,9 @@ void kassert_fail(const char* s) __attribute__((noreturn));
 
   
 #ifdef DEBUG
-#define kassert(cond)                    \
-  do {                                   \
-    if (!(cond)) kassert_fail("" #cond); \
+#define kassert(cond)                              \
+  do {                                             \
+    if (unlikely(!(cond))) kassert_fail("" #cond); \
   } while (0)
 #else
 #define kassert(cond) do {} while(0);

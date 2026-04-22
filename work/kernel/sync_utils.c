@@ -38,8 +38,8 @@ static inline void atomic_set_release(void *addr, uint32 val) {
     );
 }
 
-// 5. 原子比较并交换 (CAS)：无锁挂载页表、更新 PTE 的利器
-static inline uint32 atomic_cas(void *addr, uint64 expected, uint64 new_val) {
+// 5. 原子比较并交换 (CAS)：无锁挂载页表、更新 PTE 的利器（64位）
+static inline uint32 atomic_cas_d(void *addr, uint64 expected, uint64 new_val) {
     uint32 success;
     __asm__ __volatile__ (
         "1: lr.d %0, (%1)       \n" // 1. 加载并保留 (Load-Reserved)
@@ -55,8 +55,24 @@ static inline uint32 atomic_cas(void *addr, uint64 expected, uint64 new_val) {
     return success;
 }
 
+// 6. 原子比较并交换（CAS）（32位）
+static inline void atomic_cas_w(void *addr, uint32 expected, uint32 new_val) {
+    uint32 success;
+    __asm__ __volatile__ (
+        "1: lr.w %0, (%1)       \n"
+        "   bne %0, %2, 2f      \n"
+        "   sc.w.rl %0, %3, (%1)\n"
+        "   bnez %0, 1b         \n"
+        "   li %0, 1            \n"
+        "   j 3f                \n"
+        "2: li %0, 0            \n"
+        "3:                     \n"
+        : "=&r" (success) : "r" (addr), "r" (expected), "r" (new_val) : "memory"
+    );
+    return success;
+}
 
-// 6. Spinlock 实现
+// 7. Spinlock 实现
 // Spinlock 上锁
 static inline void lock_acquire(void* lock) {
     //持续请求锁

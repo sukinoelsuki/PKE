@@ -58,8 +58,8 @@ static inline void __list_add(list_node *prev, list_node* new_head, list_node *n
   prev->next = new_head;
 }
 
-// 不判断是否为空，保证安全
-static inline list_node* list_pop(list_node *head) {
+// 不判断是否为空，调用者保证安全
+static inline list_node* __list_pop(list_node *head) {
   list_node *node = head->next;
   __list_del(node);
   return node;
@@ -101,8 +101,11 @@ uint64 nr_pages;
 // Per-CPU Cache 实现“批发-零售”策略
 percpu_cache_t pcpu_caches[NCPU];
 
-static uint64 free_mem_start_addr;  //beginning address of free memory
-static uint64 free_mem_end_addr;    //end address of free memory (not included)
+static uint64 free_mem_start_addr;  // beginning address of free memory
+static uint64 free_mem_end_addr;    // end address of free memory (not included)
+
+static uint64 buddy_start;          // real beginning address of buddy system
+static uint64 buddy_end;            // actually equals to free_mem_end_addr
 
 // 当前内存的主 Buddy System
 buddy_system main_buddy;
@@ -153,8 +156,8 @@ static inline uint64 buddy_system_init(uint64 start_addr, uint64 end_addr) {
 void buddy_split(uint32 big_order, uint32 target_order) {
   for (int i = big_order; i > target_order; i--) {
     // 将当前阶第一个空闲的 page 取出来
-    list_node *n = list_pop(&main_buddy.free_area[i]);
-    page_t *p = node_to_page(n);
+    list_node *n = __list_pop(&main_buddy.free_area[i]);
+    page_t *p = NODE_TO_PAGE(n);
     
     // 计算当前页的 buddy，以便实现分割
     // 分割意味着降级了，所以在下一阶上加 1 就是它的 buddy
@@ -173,20 +176,22 @@ void buddy_split(uint32 big_order, uint32 target_order) {
   }
 }
 
-
 void *buddy_alloc(uint32 order) {
-
+  // 函数暴露给了用户程序调用，要进行断言保护
+  kassert(likely(order >= 0 && order < MAX_ORDER));
+  
   // 操作链表，只能上 Spinlock
   lock_acquire(&main_buddy.buddy_lock.lock);
 
   for(int i = order; i < MAX_ORDER; ++i) {
+    // 判断当前阶的链表是否为空，后面的 list_pop 不可能为空
     if (main_buddy.free_area[i].next == &main_buddy.free_area[i])
       continue;
 
     if (i > order) 
       buddy_split(i, order);
     
-    list_node *free_node = list_pop(&main_buddy.free_area[order]);
+    list_node *free_node = __list_pop(&main_buddy.free_area[order]);
     page_t *p = NODE_TO_PAGE(free_node);
     
     lock_release(&main_buddy.buddy_lock.lock);
@@ -200,9 +205,28 @@ void *buddy_alloc(uint32 order) {
 
   // 释放全局锁
   lock_release(&main_buddy.buddy_lock.lock);
+  // 只有大于供给大小的块可能触发
   panic("buddy_alloc : Out of required size of memory!\n");
   return NULL;
 }
+
+// 只分配大小为 4KB 的块
+void *alloc_page(void) {
+  uint64 cpu_id = read_tp();
+
+  // 从 buddy system 中批发
+  if (pcpu_caches[cpu_id].count == 0) {
+    lock_acquire(&main_buddy.buddy_lock.lock);
+    for (int i = 0; i < 16; i++) {
+      pcpu_caches[cpu_id].objs[pcpu_caches[cpu_id].count++] = PFN_TO_PAGE(ADDR_TO_PFN(buddy_alloc(0)));
+    }
+    lock_release(&main_buddy.buddy_lock.lock);
+  }
+
+  // 在 percpu cache 中零售
+  return PFN_TO_ADDR(PAGE_TO_PFN(pcpu_caches[cpu_id].objs[--pcpu_caches[cpu_id].count]));
+}
+
 
 static inline void __buddy_merge_inner(page_t *p) {
   uint64 pfn = PAGE_TO_PFN(p);
@@ -235,11 +259,11 @@ static inline void __buddy_merge_inner(page_t *p) {
 
 // 带锁的 __buddy_merge_inner，以供非连续性释放空间时使用
 void buddy_free(void *addr) {
+
+  // 暴露给用户程序，需要保护
   // 经过分支预测，几乎没有性能损耗，同时监测了错误
-  if (unlikely(!addr)){
-    panic("buddy_free : NULL address!\n");
-    return;
-  }
+  kassert(addr >= buddy_start || addr < buddy_end);
+
   uint64 pfn = ADDR_TO_PFN(addr);
   lock_acquire(&main_buddy.buddy_lock.lock);
   __buddy_merge_inner(PFN_TO_PAGE(pfn));
@@ -248,19 +272,22 @@ void buddy_free(void *addr) {
 
 void pfree(void* addr) {
   page_t *p = PFN_TO_PAGE(ADDR_TO_PFN(addr));
+  uint64 flags;
 
+  // 非 0 阶页块释放的概率极小？能承受分支预测失败？
   if (unlikely(p->status.order != 0)) {
-    push_off();
+    flags = disable_irqsave();
     lock_acquire(&main_buddy.buddy_lock.lock);
     __buddy_merge_inner(p);
     lock_release(&main_buddy.buddy_lock.lock);
-    pop_off();
+    enable_irqrestore(flags);
     return;
   }
 
-  push_off();
+  flags = disable_irqsave();
   uint64 id = read_tp();
 
+  // Cache 满了，集中释放一半，只拿一次锁
   if (pcpu_caches[id].count == PCPU_CACHE_SIZE) {
     lock_acquire(&main_buddy.buddy_lock.lock);
     for (int i = 0; i < 16; i++) {
@@ -270,41 +297,14 @@ void pfree(void* addr) {
   }
 
   pcpu_caches[id].objs[++pcpu_caches[id].count] = p;
-  pop_off();
+  enable_irqrestore(flags);
 }
 
-// 对私有 Cache 集中释放 PERCPU_CACHE_SIZE / 2 个页块（拿一次锁）
-void pfree_batch(uint64 curr_cpu_id) {
-  lock_acquire(&main_buddy.buddy_lock.lock);
-
-  // 每次只还 16 个，避免释放后马上取用
-  for (int i = 0; i < 16; i++) 
-    __buddy_merge_inner(pcpu_caches[curr_cpu_id].objs[--pcpu_caches[curr_cpu_id].count]);
-
-  lock_release(&main_buddy.buddy_lock.lock);
+static inline void page_ref_share() {
+  
 }
 
-// 只分配了大小为 4KB 的块
-void *alloc_page(void) {
-  uint64 cpu_id = read_tp();
 
-  if (pcpu_caches[cpu_id].count <= 2) {
-    // 从 buddy system 中批发
-    lock_acquire(&main_buddy.buddy_lock.lock);
-    for (int i = 0; i < 16; i++) {
-      pcpu_caches[cpu_id].objs[pcpu_caches[cpu_id].count++] = PFN_TO_PAGE(ADDR_TO_PFN(buddy_alloc(0)));
-    }
-    lock_release(&main_buddy.buddy_lock.lock);
-  }
-
-  // 在 percpu cache 中零售
-  return PFN_TO_ADDR(PAGE_TO_PFN(pcpu_caches[cpu_id].objs[--pcpu_caches[cpu_id].count]));
-}
-
-//
-// pmm_init() establishes the list of free physical pages according to available
-// physical memory space.
-//
 void pmm_init() {
   
   // start of kernel program segment
@@ -338,8 +338,8 @@ void pmm_init() {
 
   nr_pages = g_mem_size / PGSIZE;
   uint64 metaspace = nr_pages * sizeof(page_t);
-  uint64 buddy_start = ROUNDUP((metaspace + (uint64)pages), PGSIZE);
-  uint64 buddy_end = ROUNDDOWN(free_mem_end_addr, PGSIZE);
+  buddy_start = ROUNDUP((metaspace + (uint64)pages), PGSIZE);
+  buddy_end = ROUNDDOWN(free_mem_end_addr, PGSIZE);
 
   memset(pages, 0, metaspace);
   

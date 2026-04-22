@@ -22,7 +22,7 @@ int map_pages(pagetable_t page_dir, uint64 va, uint64 size, uint64 pa, int perm)
 
   for (first = ROUNDDOWN(va, PGSIZE), last = ROUNDDOWN(va + size - 1, PGSIZE);
       first <= last; first += PGSIZE, pa += PGSIZE) {
-    if ((pte = page_walk(page_dir, first, 1)) == 0) return -1;
+    if ((pte = page_walk(page_dir, first, 0, 1)) == 0) return -1;
     if (*pte & PTE_V)
       panic("map_pages fails on mapping va (0x%lx) to pa (0x%lx)", first, pa);
     *pte = PA2PTE(pa) | perm | PTE_V;
@@ -47,8 +47,8 @@ uint64 prot_to_type(int prot, int user) {
 // traverse the page table (starting from page_dir) to find the corresponding pte of va.
 // returns: PTE (page table entry) pointing to va.
 //
-pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
-  if (va >= MAXVA) panic("page_walk");
+pte_t *page_walk(pagetable_t page_dir, uint64 va, int target_level, int alloc) {
+  kassert(va < 0 || va > MAXVA);
 
   // starting from the page directory
   pagetable_t pt = page_dir;
@@ -56,7 +56,7 @@ pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
   // traverse from page directory to page table.
   // as we use risc-v sv39 paging scheme, there will be 3 layers: page dir,
   // page medium dir, and page table.
-  for (int level = 2; level > 0; level--) {
+  for (int level = 2; level > target_level; level--) {
     // macro "PX" gets the PTE index in page table of current level
     // "pte" points to the entry of current level
     pte_t *pte = pt + PX(level, va);
@@ -67,17 +67,19 @@ pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
       // phisical address of pagetable of next level
       pt = (pagetable_t)PTE2PA(*pte);
     } 
-    else if (alloc && (pt = (pte_t *)alloc_page(1)) != 0) { //PTE invalid (not exist).
-        // writes the physical address of newly allocated page to pte, to establish the
-        // page table tree.
-        if(atomic_cas((void *)pte, 0, PA2PTE(pt) | PTE_V) == 0) {
-          free_page((void *)pt);
-          pt = PTE2PA(*pte);
-          continue; // 可能其它核完成了全部分配，顺着页表更新，返回最新的三级页表项。
-        }
+    else if (alloc && (pt = (pte_t *)alloc_page()) != 0) { //PTE invalid (not exist).
+      // writes the physical address of newly allocated page to pte, to establish the
+      // page table tree.
+      if(atomic_cas_d((void *)pte, 0, PA2PTE(pt) | PTE_V) == 0) {
+        pfree((void *)pt);
+        pt = PTE2PA(*pte);
+        continue; // 可能其它核完成了全部分配，顺着页表更新，返回最新的三级页表项。
+      }
+
       // allocate a page (to be the new pagetable), if alloc == 1
-        page_ref_share((void *)pt);
-        memset(pt, 0, PGSIZE);
+      page_ref_share((void *)pt);
+      
+      memset(pt, 0, PGSIZE);
     } else {
       //returns NULL, if alloc == 0, or no more physical page remains
       return 0;
@@ -97,7 +99,7 @@ uint64 lookup_pa(pagetable_t pagetable, uint64 va) {
 
   if (va >= MAXVA) return 0;
 
-  pte = page_walk(pagetable, va, 0);
+  pte = page_walk(pagetable, va, 0, 0);
   if (pte == 0 || (*pte & PTE_V) == 0 || ((*pte & PTE_R) == 0 && (*pte & PTE_W) == 0))
     return 0;
   pa = PTE2PA(*pte);
@@ -163,7 +165,7 @@ void kern_vm_init(void) {
 // application.
 //
 void *user_va_to_pa(pagetable_t page_dir, void *va) {
-  pte_t *pte = page_walk(page_dir, (uint64)va, 0);
+  pte_t *pte = page_walk(page_dir, (uint64)va, 0, 0);
 
   if (pte == 0 || (*pte & PTE_V) == 0)
      return NULL;
@@ -191,11 +193,11 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
   pte_t *pte;
 
   for (first_va = ROUNDDOWN(va, PGSIZE); first_va < va + size; first_va += PGSIZE) {
-    if ((pte = page_walk(page_dir, first_va, 0)) == 0) continue;
+    if ((pte = page_walk(page_dir, first_va, 0, 0)) == 0) continue;
     if ((*pte & PTE_V) == 0) continue;
     if (free) {
       uint64 pa = PTE2PA(*pte);
-      free_page((void *)pa);
+      pfree((void *)pa);
     }
     *pte = 0;
   }

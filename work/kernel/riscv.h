@@ -148,6 +148,22 @@ static inline uint64 read_tp(void) {
 // write tp, the thread pointer, holding hartid (core number), the index into cpus[].
 static inline void write_tp(uint64 x) { asm volatile("mv tp, %0" : : "r"(x)); }
 
+// disable interrupts
+static inline long disable_irqsave() {
+  long old_status;
+  asm volatile("csrrc %0, sstatus, 2" : "=r"(old_status));
+  // return the origin status
+  return old_status & 2;
+}
+
+// enable interrupts
+static inline void enable_irqrestore(long flags) {
+  if (flags) {
+    // if it was on, restore
+    asm volatile("csrs sstatus, 2");
+  }
+}
+
 typedef struct riscv_regs_t {
   /*  0  */ uint64 ra;
   /*  8  */ uint64 sp;
@@ -224,14 +240,6 @@ static inline void flush_tlb(void) { asm volatile("sfence.vma zero, zero"); }
 
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t;  // 512 PTEs
-
-
-/*  封装原子操作，提供接口在 sync_utils.h中*/
-// 提供上锁解锁接口，在 sync_utils.S 里可找到
-extern void spin_lock(volatile int *lock);
-extern void spin_unlock(volatile int *lock);
-
-
 
 //定义全局spinlock_t 变量类型
 #ifndef _SPINLOCK_T_

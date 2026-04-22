@@ -5,10 +5,6 @@
 #ifndef _RISCV_ATOMIC_H_
 #define _RISCV_ATOMIC_H_
 
-// Currently, interrupts are always disabled in M-mode.
-// todo: for PKE, wo turn on irq in lab_1_3_timer, so wo have to implement these two functions.
-#define disable_irqsave() (0)
-#define enable_irqrestore(flags) ((void)(flags))
 
 typedef struct {
   int lock;
@@ -21,17 +17,27 @@ typedef struct {
   { 0 }
 
 #define mb() asm volatile("fence" ::: "memory")
-#define atomic_set(ptr, val) (*(volatile typeof(*(ptr))*)(ptr) = val)
-#define atomic_read(ptr) (*(volatile typeof(*(ptr))*)(ptr))
 
-#define atomic_binop(ptr, inc, op)         \
-  ({                                       \
-    long flags = disable_irqsave();        \
-    typeof(*(ptr)) res = atomic_read(ptr); \
-    atomic_set(ptr, op);                   \
-    enable_irqrestore(flags);              \
-    res;                                   \
-  })
+// 64 bits atomic fetch and add
+static inline long atomic_binop_d(long *ptr, long inc, long op) {
+  long old;
+  __asm__ __volatile__ (
+    "amoadd.d %0, %2, (%1)"
+    : "=r"(old) : "r" (ptr), "r"(op) : "memory"
+  );
+  return old;
+}
+
+// 32 bits atomic fetch and add
+static inline int atomic_binop_w(int *ptr, int inc, int op) {
+  int old;
+  __asm__ __volatile__ (
+    "amoadd.w %0, %2, (%1)"
+    : "=r"(old) : "r" (ptr), "r"(op) : "memory"
+  );
+  return old;
+}
+
 #define atomic_add(ptr, inc) atomic_binop(ptr, inc, res + (inc))
 #define atomic_or(ptr, inc) atomic_binop(ptr, inc, res | (inc))
 #define atomic_swap(ptr, inc) atomic_binop(ptr, inc, (inc))

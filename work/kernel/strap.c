@@ -73,7 +73,7 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
           memcpy(new_pa, (void *)pa, PGSIZE);
           *pte = PA2PTE((uint64)new_pa) | ((*pte & 0x3ff) & ~PTE_COW) | PTE_W;
 
-          free_page((void *)pa);
+          pfree((void *)pa);
         } else {
           *pte |= PTE_W;
           *pte &= ~PTE_COW;
