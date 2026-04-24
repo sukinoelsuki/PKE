@@ -48,7 +48,7 @@ uint64 prot_to_type(int prot, int user) {
 // returns: PTE (page table entry) pointing to va.
 //
 pte_t *page_walk(pagetable_t page_dir, uint64 va, int target_level, int alloc) {
-  kassert(va < 0 || va > MAXVA);
+  kassert(va > 0 && va < MAXVA);
 
   // starting from the page directory
   pagetable_t pt = page_dir;
