@@ -300,7 +300,7 @@ void pfree(void* addr) {
   enable_irqrestore(flags);
 }
 
-static inline void page_ref_share() {
+static inline void page_ref_share(void *pa) {
   
 }
 
